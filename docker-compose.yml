@@ -1,0 +1,172 @@
+services:
+
+  # =========================================
+  # qBittorrent
+  # =========================================
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Shanghai
+      - WEBUI_PORT=8080
+    volumes:
+      - /home/ibuprofen/data/appdata/qbittorrent:/config
+      - /home/ibuprofen/data/downloads:/downloads
+    ports:
+      - 8080:8080
+      - 6881:6881
+      - 6881:6881/udp
+    restart: unless-stopped
+
+  # =========================================
+  # Jellyfin
+  # =========================================
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Shanghai
+    volumes:
+      - /home/ibuprofen/data/appdata/jellyfin:/config
+      - /home/ibuprofen/data/downloads:/media
+    ports:
+      - 8096:8096
+    restart: unless-stopped
+
+  # =========================================
+  # Immich
+  # =========================================
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: immich-server
+    environment:
+      - TZ=Asia/Shanghai
+      - DB_HOSTNAME=immich-postgres
+      - DB_USERNAME=immich
+      - DB_PASSWORD=immich_password
+      - DB_DATABASE_NAME=immich
+      - REDIS_HOSTNAME=immich-redis
+      - UPLOAD_LOCATION=/usr/src/app/upload
+    volumes:
+      - /home/ibuprofen/data/appdata/immich/upload:/usr/src/app/upload
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - 2283:2283
+    depends_on:
+      - immich-redis
+      - immich-postgres
+    restart: unless-stopped
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:release
+    container_name: immich-machine-learning
+    volumes:
+      - /home/ibuprofen/data/appdata/immich/model-cache:/cache
+    restart: unless-stopped
+
+  immich-redis:
+    image: docker.io/redis:6.2-alpine
+    container_name: immich-redis
+    restart: unless-stopped
+
+  immich-postgres:
+    image: docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0
+    container_name: immich-postgres
+    environment:
+      - POSTGRES_USER=immich
+      - POSTGRES_PASSWORD=immich_password
+      - POSTGRES_DB=immich
+    volumes:
+      - /home/ibuprofen/data/appdata/immich/postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # =========================================
+  # MoviePilot
+  # =========================================
+  moviepilot:
+    stdin_open: true
+    tty: true
+    container_name: moviepilot-v2
+    hostname: moviepilot-v2
+    image: jxxghp/moviepilot-v2:latest
+    ports:
+      - '3000:3000'
+      - '3001:3001'
+    volumes:
+      - /home/ibuprofen/data/downloads:/media
+      - /home/ibuprofen/data/appdata/moviepilot/config:/config
+      - /home/ibuprofen/data/appdata/moviepilot/core:/moviepilot/.cache/ms-playwright
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/ibuprofen/data/appdata/qbittorrent/qBittorrent/BT_backup:/BT_backup
+    environment:
+      - NGINX_PORT=3000
+      - PORT=3001
+      - PUID=0
+      - PGID=0
+      - UMASK=000
+      - TZ=Asia/Shanghai
+      - SUPERUSER=admin
+      - SUPERUSER_PASSWORD=123123
+      - DB_TYPE=postgresql
+      - DB_POSTGRESQL_HOST=moviepilot-postgres
+      - DB_POSTGRESQL_PORT=5432
+      - DB_POSTGRESQL_DATABASE=moviepilot
+      - DB_POSTGRESQL_USERNAME=moviepilot
+      - DB_POSTGRESQL_PASSWORD=pg_password
+      - CACHE_BACKEND_TYPE=redis
+      - CACHE_BACKEND_URL=redis://:redis_password@moviepilot-redis:6379
+      - HTTP_PROXY=http://192.168.1.114:7897
+      - HTTPS_PROXY=http://192.168.1.114:7897
+      - NO_PROXY=localhost,127.0.0.1
+    restart: always
+    depends_on:
+      moviepilot-postgres:
+        condition: service_healthy
+      moviepilot-redis:
+        condition: service_healthy
+
+  moviepilot-redis:
+    container_name: moviepilot-redis
+    image: redis
+    command: redis-server --save 600 1 --requirepass redis_password
+    volumes:
+      - /home/ibuprofen/data/appdata/moviepilot/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  moviepilot-postgres:
+    container_name: moviepilot-postgres
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_DB: moviepilot
+      POSTGRES_USER: moviepilot
+      POSTGRES_PASSWORD: pg_password
+    volumes:
+      - /home/ibuprofen/data/appdata/moviepilot/postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moviepilot -d moviepilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  moviepilot-pgloader:
+    container_name: moviepilot-pgloader
+    image: dimitri/pgloader:latest
+    volumes:
+      - /home/ibuprofen/data/appdata/moviepilot/config:/mp_config
+    command: >
+      pgloader
+      sqlite:///mp_config/user.db
+      postgresql://moviepilot:pg_password@moviepilot-postgres:5432/moviepilot
+    depends_on:
+      moviepilot-postgres:
+        condition: service_healthy
