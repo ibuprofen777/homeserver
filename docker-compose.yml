@@ -170,3 +170,10 @@ services:
     depends_on:
       moviepilot-postgres:
         condition: service_healthy
+
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd00::/80
